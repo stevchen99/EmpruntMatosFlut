@@ -29,7 +29,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
       currentPersonId = prefs.getString('savedPersonId');
       materials = m;
       borrowings = b;
+
+      // Reset selection if the currently selected material was borrowed by someone else
+      if (selectedMaterialId != null && !_isMaterialAvailable(selectedMaterialId!)) {
+        selectedMaterialId = null;
+      }
     });
+  }
+
+  // Checks if material has an active loan (estRendu == false)
+  bool _isMaterialAvailable(String materialId) {
+    for (var b in borrowings) {
+      String bMaterialId = b['materialId']['_id']?.toString() ?? b['materialId'].toString();
+      if (bMaterialId == materialId && b['estRendu'] == false) {
+        return false;
+      }
+    }
+    return true;
   }
 
   _selectDate(BuildContext context) async {
@@ -46,7 +62,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   _submitBorrow() async {
     if (currentPersonId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Configurez la personne dans Réglages !")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Configurez la personne dans Réglages !"))
+      );
       return;
     }
     bool success = await ApiService.addBorrowing(
@@ -56,7 +74,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       selectedDate
     );
     if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Emprunt réussi !")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Emprunt réussi !"))
+      );
       setState(() => selectedMaterialId = null);
       _refresh();
     }
@@ -65,12 +85,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Dashboard Emprunts"), actions: [
-        IconButton(icon: const Icon(Icons.refresh), onPressed: _refresh)
-      ]),
+      appBar: AppBar(
+        title: const Text("Dashboard Emprunts"), 
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _refresh)
+        ]
+      ),
       body: Column(
         children: [
-          // PARTIE HAUTE : FORMULAIRE
+          // FORM SECTION
           Padding(
             padding: const EdgeInsets.all(15),
             child: Card(
@@ -83,15 +106,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       isExpanded: true,
                       hint: const Text("Choisir le matériel"),
                       value: selectedMaterialId,
-                      items: materials.map((m) => DropdownMenuItem(value: m['_id'].toString(), child: Text(m['libelle']))).toList(),
-                      onChanged: (val) => setState(() => selectedMaterialId = val),
+                      items: materials.map((m) {
+                        String mId = m['_id'].toString();
+                        bool isAvailable = _isMaterialAvailable(mId);
+                        return DropdownMenuItem(
+                          value: mId,
+                          enabled: isAvailable,
+                          child: Text(
+                            isAvailable ? m['libelle'] : "${m['libelle']} (Indisponible)",
+                            style: TextStyle(
+                              color: isAvailable ? Colors.black : Colors.grey,
+                              fontStyle: isAvailable ? FontStyle.normal : FontStyle.italic,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        if (val != null) setState(() => selectedMaterialId = val);
+                      },
                     ),
                     Row(
                       children: [
                         Expanded(
                           child: TextField(
                             controller: _daysController,
-                            decoration: const InputDecoration(labelText: "Durée (jours)", icon: Icon(Icons.timer)),
+                            decoration: const InputDecoration(
+                              labelText: "Durée (jours)", 
+                              icon: Icon(Icons.timer)
+                            ),
                             keyboardType: TextInputType.number,
                           ),
                         ),
@@ -106,7 +148,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(height: 15),
                     ElevatedButton(
                       onPressed: selectedMaterialId == null ? null : _submitBorrow,
-                      style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 45), backgroundColor: Colors.blue, foregroundColor: Colors.white),
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 45), 
+                        backgroundColor: Colors.blue, 
+                        foregroundColor: Colors.white
+                      ),
                       child: const Text("VALIDER L'EMPRUNT"),
                     )
                   ],
@@ -116,21 +162,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           
           const Divider(),
-          const Text("Historique des emprunts", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           
-          // PARTIE BASSE : LISTE
+          // TRACKING LISTS SECTION
           Expanded(
-            child: ListView.builder(
-              itemCount: borrowings.length,
-              itemBuilder: (context, index) {
-                var b = borrowings[index];
-                return ListTile(
-                  leading: Icon(b['estRendu'] ? Icons.check_circle : Icons.pending, color: b['estRendu'] ? Colors.green : Colors.orange),
-                  title: Text("${b['materialId']['libelle']}"),
-                  subtitle: Text("Par: ${b['personId']['nom']} - ${b['dureeJours']} jours"),
-                  trailing: Text("${DateTime.parse(b['dateEmprunt']).day}/${DateTime.parse(b['dateEmprunt']).month}"),
-                );
-              },
+            child: ListView(
+              children: [
+                // 1. ACTIVE LOANS (NOT RETURNED YET)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Text(
+                    "Matériel non rendu (En cours de prêt)",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.orange),
+                  ),
+                ),
+                ...borrowings
+                    .where((b) => b['estRendu'] == false)
+                    .map((b) => ListTile(
+                          tileColor: Colors.orange.shade50,
+                          leading: const Icon(Icons.pending, color: Colors.orange),
+                          title: Text(
+                            "${b['materialId']['libelle']}", 
+                            style: const TextStyle(fontWeight: FontWeight.bold)
+                          ),
+                          subtitle: Text("Utilisé par: ${b['personId']['nom']} (${b['dureeJours']} jours)"),
+                          trailing: Text("${DateTime.parse(b['dateEmprunt']).day}/${DateTime.parse(b['dateEmprunt']).month}"),
+                        ))
+                    .toList(),
+
+                const Divider(height: 30),
+
+                // 2. RETURNED HISTORY
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Text(
+                    "Historique (Matériel rendu)",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green),
+                  ),
+                ),
+                ...borrowings
+                    .where((b) => b['estRendu'] == true)
+                    .map((b) => ListTile(
+                          leading: const Icon(Icons.check_circle, color: Colors.green),
+                          title: Text("${b['materialId']['libelle']}"),
+                          subtitle: Text("Par: ${b['personId']['nom']} - ${b['dureeJours']} jours"),
+                          trailing: Text("${DateTime.parse(b['dateEmprunt']).day}/${DateTime.parse(b['dateEmprunt']).month}"),
+                        ))
+                    .toList(),
+              ],
             ),
           ),
         ],
